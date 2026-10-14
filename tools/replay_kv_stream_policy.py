@@ -4,10 +4,10 @@
     python replay_kv_stream_policy.py TRACE.bin [--layers 2 --slots 8192 --bytes 4224 --lambda 0.5 --decay-every 64]
     python replay_kv_stream_policy.py --synthetic agent --calls 2000 --universe 40000 --slots 8192
 
-Trace record = int32 layer, int32 k, k int32 block ids, k float32 weights - the same record layout as
---dump-routing's trace; one record is one kv_stream_resolve call (the blocks a selection named, ascending, one
-entry per block; the engine's ids are cells, so a block is a cell id divided by --page). A --dump-kv-select run
-is the intended source of real traces; until that exists, --synthetic writes the patterns below in memory.
+Trace record = int32 layer, int32 k, k int32 block ids, k float32 weights - self-describing, k may vary per
+record.  One record is one kv_stream_resolve call (the blocks a selection named, ascending, one entry per block;
+the engine's ids are cells, so a block is a cell id divided by --page).  The engine's --dump-kv-select writes this
+trace (weights 1.0: the indexer's scores are not copied); --synthetic writes the patterns below in memory.
 
 The pools are one per layer, as the engine's are. Policies per pool:
 
@@ -45,23 +45,22 @@ import sys
 # ---------------------------------------------------------------- trace
 
 def load_trace(path: str) -> list[tuple[int, list[int], list[float]]]:
-    """[(layer, block ids, weights)] from a binary trace; k is fixed by the first record."""
+    """[(layer, block ids, weights)] from a binary trace.  Each record is self-describing - int32 layer, int32 k,
+    k int32 block ids, k float32 weights - so k may vary per record, as the engine's --dump-kv-select writes it
+    (one record per resolve call, a call's own blocks)."""
     with open(path, "rb") as f:
         raw = f.read()
-    if len(raw) < 8:
-        raise SystemExit(f"{path}: too short for one record")
-    k = struct.unpack_from("<i", raw, 4)[0]
-    if k <= 0 or len(raw) % (8 + 8 * k) != 0:
-        raise SystemExit(f"{path}: not a trace of (int32 layer, int32 k, {k} int32 ids, {k} float32 weights) records")
-    rec = 8 + 8 * k
-    out = []
-    for off in range(0, len(raw), rec):
-        layer, got = struct.unpack_from("<ii", raw, off)
+    out, off = [], 0
+    while off < len(raw):
+        if len(raw) - off < 8:
+            raise SystemExit(f"{path}: truncated record header at byte {off}")
+        layer, k = struct.unpack_from("<ii", raw, off)
+        if k <= 0 or k > (1 << 24) or len(raw) - off < 8 + 8 * k:
+            raise SystemExit(f"{path}: truncated or malformed record at byte {off} (k={k})")
         ids = list(struct.unpack_from(f"<{k}i", raw, off + 8))
         ws = list(struct.unpack_from(f"<{k}f", raw, off + 8 + 4 * k))
-        if got != k:
-            raise SystemExit(f"{path}: record at {off} says {got} ids, the file's k is {k}")
         out.append((layer, ids, ws))
+        off += 8 + 8 * k
     return out
 
 

@@ -96,8 +96,9 @@ class TraceFile(unittest.TestCase):
     def test_round_trip(self):
         import tempfile
         from pathlib import Path
-        # weights that are exact in binary32, so the file reads back what was written
-        recs = [(0, [1, 2, 3], [0.5, 0.25, 0.25]), (1, [4, 5, 6], [1.0, 1.0, 1.0]), (0, [7, 8, 9], [0.25, 0.25, 0.5])]
+        # weights that are exact in binary32, so the file reads back what was written; k varies per record, as the
+        # engine's --dump-kv-select writes it
+        recs = [(0, [1, 2, 3], [0.5, 0.25, 0.25]), (1, [4, 5], [1.0, 0.5]), (0, [7, 8, 9], [0.25, 0.25, 0.5])]
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "t.bin"
             with open(path, "wb") as f:
