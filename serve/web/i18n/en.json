@@ -301,5 +301,14 @@
   "chip.image": "image",
   "chip.pasted": "pasted image",
   "chip.tool": "tool",
-  "export.you": "You"
+  "export.you": "You",
+  "err.bodyTooLarge": "The request is larger than this server accepts",
+  "err.promptTooLong": "The prompt is longer than the model's context",
+  "err.noVision": "This model cannot read pictures",
+  "err.key": "Wrong or missing API key",
+  "err.engine": "The engine stopped; the next request starts it again",
+  "err.notFound": "Not found",
+  "err.timeout": "The request timed out",
+  "err.memory": "Not enough VRAM or RAM for this request",
+  "err.structured": "The answer did not match the required format"
 }

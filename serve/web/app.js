@@ -26,7 +26,7 @@ let lang = "en", pack = {}, packs = {};
 const H = (key) => ({key});                  // a key read when the string is drawn, not when the table is built
 function t(key, vars) {
   if (key && key.key) key = key.key;                            // an H() marker
-  const s = pack[key] !== undefined ? pack[key] : BASE.get(key);
+  const s = pack[key] !== undefined ? pack[key] : (BASE.get(key) !== undefined ? BASE.get(key) : FALLBACK.get(key));
   if (s === undefined || s === null) return key;                // a missing key is a bug, not a blank page
   if (!vars) return String(s);
   return String(s).replace(/\{(\w+)\}/g, (m, k) => (vars[k] == null ? "" : vars[k]));
@@ -49,6 +49,11 @@ function applyLang() {
   document.documentElement.dir = (pack.meta && pack.meta.dir) || "ltr";
   document.title = t("app.title");
   applyStatic(document);
+  // the cards are built once at start, which can be before the pack arrived: relabel them
+  for (const m of METRICS) {
+    const el = $(`ml-${m.key}`);
+    if (el) setWords(el, t(`mon.metric.${m.key}`));
+  }
   // what the script built since: the parts that keep their own text
   if (lastMetrics) render(lastMetrics);
   renderMcp();
@@ -98,7 +103,6 @@ function fillLangs() {
     const l = LANGS.find((x) => x.code === c);
     return '<option value="' + esc(c) + '"' + (c === lang ? " selected" : "") + ">" + esc(l ? l.name : c) + "</option>";
   }).join("");
-  setHtml($("mcp-list"), mcpHtml);
 }
 async function loadLangs() {
   try {
@@ -116,7 +120,8 @@ if (langSel) langSel.onchange = () => setLang(langSel.value, true);
 // so the two fought over the same node - one flip per second.  Numbers still update every tick (a number needs no
 // translating); a label is written once and then left alone.
 function setText(el, value) {
-  if (el && el.textContent !== String(value)) el.textContent = value;
+  if (!el) return;                                 // a missing node must not stop the page (it stops the language)
+  if (el.textContent !== String(value)) el.textContent = value;
 }
 function setHtml(el, value) {
   if (el && el.innerHTML !== String(value)) el.innerHTML = value;
@@ -130,6 +135,34 @@ function setWords(el, value) {
 }
 function setAttr(el, name, value) {
   if (el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+}
+
+// ------------------------------------------------------------------ the server's error text (#2686)
+// The API answers in English - that text is a contract for programs, so it stays as it is.  Only what this page
+// shows is translated: the messages the server actually produces are matched here, and anything that does not
+// match is shown as the server wrote it (better English than a wrong guess).
+const SERVER_ERROR_TEXT = [
+  [/the request body is larger than/i, "err.bodyTooLarge"],
+  [/larger than the model/i, "err.promptTooLong"],
+  [/context|too long|exceeds/i, "err.promptTooLong"],
+  [/no image encoder|no vision|not an image/i, "err.noVision"],
+  [/missing or wrong API key/i, "err.key"],
+  [/the engine|engine died|restart/i, "err.engine"],
+  [/not found/i, "err.notFound"],
+  [/timed out|timeout/i, "err.timeout"],
+  [/out of memory|VRAM|memory/i, "err.memory"],
+  [/structured output/i, "err.structured"],
+];
+function errorText(message) {
+  const s = String(message || "");
+  if (!s) return s;
+  for (const [re, key] of SERVER_ERROR_TEXT) {
+    if (re.test(s)) {
+      const got = t(key);
+      if (got !== key) return `${got}\n\n${s}`;           // the translation, then what the server said
+    }
+  }
+  return s;
 }
 
 // ------------------------------------------------------------------ toasts
@@ -227,6 +260,7 @@ async function loadHealth() {
 }
 
 // ------------------------------------------------------------------ Monitor
+const FALLBACK = new Map();                  // the page's own English, for a key no pack has (yet)
 const METRICS = [
   {key: "speed", label: "Speed", icon: "gauge", unit: "t/s", series: "tok_s"},
   {key: "gpu", label: "GPU load", icon: "gpu", unit: "%", series: "gpu_util", max: 100},
@@ -237,9 +271,10 @@ const METRICS = [
   {key: "cpu", label: "CPU", icon: "cpu", unit: "%", series: "cpu", max: 100},
   {key: "disk", label: "Disk read", icon: "disk", unit: "MB/s", series: "disk_read_mb", tone: "info"},
 ];
+for (const m of METRICS) FALLBACK.set(`mon.metric.${m.key}`, m.label);
 $("metrics").innerHTML = METRICS.map((m) => `
   <div class="st-card metric-card"><div class="st-metric">
-    <span class="st-metric__label">${icon(m.icon, "st-icon st-icon--sm")}${esc(t("mon.metric." + m.key))}</span>
+    <span class="st-metric__label">${icon(m.icon, "st-icon st-icon--sm")}<span id="ml-${m.key}">${esc(t("mon.metric." + m.key))}</span></span>
     ${m.key === "speed" ? `<div class="speed-values">
       <div><span class="st-metric__value" id="mv-speed">-</span><span class="st-metric__sub" id="ms-speed">Decode</span></div>
       <div class="speed-prefill"><span class="st-metric__value" id="mv-prefill">-</span><span class="st-metric__sub" id="ms-prefill">Prefill</span></div>
@@ -274,8 +309,8 @@ async function poll() {
   try {
     const r = await fetch(reqShowAll ? "metrics?requests=all" : "metrics", {headers: headers()});
     if (r.status === 401) {
-      setPill("error", "API key needed");
-      if (!keyWarned) { keyWarned = true; toast("warn", "API key needed", "This server needs a key: add it under About > Settings.", 6000); }
+      setPill("error", t("pill.key"));
+      if (!keyWarned) { keyWarned = true; toast("warn", t("toast.key.title"), t("toast.key.text"), 6000); }
     } else if (r.ok) {
       lastMetrics = await r.json();
       metricsFailures = 0;
@@ -540,8 +575,8 @@ function renderMcp() {
   $("mcp-row").hidden = !servers.length;
   const ready = servers.filter((s) => s.status === "ready" || s.status === "stopped");
   setText($("mcp-sum"), servers.length ? t("mcp.summary", {tools: fmt(mcpInfo.tools), ready: ready.length, n: servers.length}) : "");
-  $("mcp-row-sub").textContent = mcpInfo.tools ? t("mcp.toolsFrom", {n: fmt(mcpInfo.tools), names: ready.map((s) => s.name).join(", ")})
-                                               : t("mcp.noneYet");
+  setText($("mcp-row-sub"), mcpInfo.tools ? t("mcp.toolsFrom", {n: fmt(mcpInfo.tools), names: ready.map((s) => s.name).join(", ")})
+                                                  : t("mcp.noneYet"));
   const mcpHtml = servers.map((s) => {
     const [cls, rawState] = MCP_STATE[s.status] || ["", s.status];
     const text = t(rawState);
@@ -552,6 +587,7 @@ function renderMcp() {
       (s.tools.length ? `<div class="mcp-server__tools">${s.tools.map((t) => `<span class="chip" title="${esc(t.description || "")}">${esc(t.tool)}</span>`).join("")}</div>` : "") +
       `</div>`;
   }).join("");
+  setHtml($("mcp-list"), mcpHtml);
 }
 
 // ------------------------------------------------------------------ Model settings (GET / POST /config, #564)
@@ -606,7 +642,7 @@ $("cfg-save").addEventListener("click", async () => {
     loadConfig();
   } catch (e) {
     $("cfg-msg").textContent = "";
-    toast("error", t("cfg.notSaved"), String(e.message || e), 6000);
+    toast("error", t("cfg.notSaved"), errorText(e.message || String(e)), 6000);
   }
 });
 
@@ -925,7 +961,7 @@ async function send() {
                                                    signal: controller.signal});
     if (!r.ok) {
       let msg = t("toast.httpStatus", {status: r.status});
-      try { msg = (await r.json()).error.message || msg; } catch (e) { /* not json */ }
+      try { msg = errorText((await r.json()).error.message || msg); } catch (e) { /* not json */ }
       if (r.status === 401) msg = t("toast.serverKey");
       throw new Error(msg);
     }
@@ -944,7 +980,7 @@ async function send() {
         if (data === "[DONE]") continue;
         let j;
         try { j = JSON.parse(data); } catch (e) { continue; }
-        if (j.error) throw new Error(j.error.message || t("toast.engineError"));
+        if (j.error) throw new Error(errorText(j.error.message) || t("toast.engineError"));
         if (j.usage) usage = j.usage;
         if (j.strata_mcp) onTool(m, j.strata_mcp);
         const d = (j.choices && j.choices[0] && j.choices[0].delta) || {};
@@ -966,7 +1002,7 @@ async function send() {
     }
   } catch (e) {
     if (e.name === "AbortError") m.stopped = true;
-    else { m.error = e.message || String(e); toast("error", t("toast.requestFailed"), m.error, 6000); }
+    else { m.error = errorText(e.message || String(e)); toast("error", t("toast.requestFailed"), m.error, 6000); }
   }
   if (thinkStart && m.thinkSecs == null) m.thinkSecs = (performance.now() - thinkStart) / 1000;
   const n = usage ? usage.completion_tokens : null;
@@ -1183,7 +1219,7 @@ $("s-apply").onclick = async () => {
       await saveShared(share, settings);
       toast("success", t("drawer.saved"), share ? t("drawer.savedShared") : t("drawer.savedUnshared"));
     } catch (e) {
-      toast("error", t("drawer.savedLocalOnly"), e.message, 6000);
+      toast("error", t("drawer.savedLocalOnly"), errorText(e.message), 6000);
     }
     return;
   }
@@ -1199,9 +1235,8 @@ setBusy(false);
 renderChat();
 const startQuestion = new URLSearchParams(location.search).get("q");   // /?q=... starts a chat (a shortcut)
 if (startQuestion) history.replaceState(null, "", location.pathname + location.hash);
-const langWanted = store.get("lang", null) || browserLang();   // the saved choice, else the browser's own
-loadLangs()
-  .then(() => setLang(langWanted, false), () => setLang("en", false))
+loadLangs()                                   // what the server has, before the browser's own is matched
+  .then(() => setLang(store.get("lang", null) || browserLang(), false), () => setLang("en", false))
   .then(() => loadHealth()).then(loadMcp)
   .then(() => { if (startQuestion) { $("input").value = startQuestion; send(); } });
 showTab(location.hash.slice(1) || "chat");
@@ -1220,7 +1255,7 @@ $("img-form").onsubmit = async (ev) => {
   try {
     const r = await fetch("v1/images/generations", {method: "POST", headers: headers(true), body: JSON.stringify(body)});
     const j = await r.json();
-    if (!r.ok) throw new Error((j.error && j.error.message) || r.statusText);
+    if (!r.ok) throw new Error(errorText((j.error && j.error.message) || r.statusText));
     for (const d of j.data) {
       const fig = document.createElement("figure");
       const img = document.createElement("img");
@@ -1234,7 +1269,7 @@ $("img-form").onsubmit = async (ev) => {
     setWords($("img-hint"), t("img.done"));
   } catch (e) {
     setWords($("img-hint"), "");
-    toast("error", t("toast.noImage"), String(e.message || e), 8000);
+    toast("error", t("toast.noImage"), errorText(e.message || String(e)), 8000);
   } finally {
     $("img-go").disabled = false;
   }

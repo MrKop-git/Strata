@@ -315,6 +315,9 @@ class Translation(unittest.TestCase):
             'function setBusy() {}', 'function outputs() {}', 'function loadConfig() {}',
             'function headers() { return {}; }',
             'const $ = () => null;',
+            'const METRICS = [{key: "speed", label: "Speed"}, {key: "vram", label: "VRAM"}];',
+            'const FALLBACK = new Map();',
+            'for (const m of METRICS) FALLBACK.set("mon.metric." + m.key, m.label);',
             self.block(),
             "const out = [];",
             'function check(name, got, want) { out.push((got === want ? "ok" : "FAIL") + " " + name + ": " + JSON.stringify(got) + (got === want ? "" : " want " + JSON.stringify(want))); }',
@@ -392,3 +395,75 @@ class NoRewrite(unittest.TestCase):
             'console.log("RESULT: ALL OK");',
         ])
         self.assertIn("RESULT: ALL OK", self.run_js(script))
+
+class RenderedPages(unittest.TestCase):
+    """#2686: what the three pages really show in a Chinese browser - not "the keys exist", but the rendered words.
+
+    These need a headless browser and skip without one, so the rest of the suite still runs anywhere. Each opens
+    the page as a user does and reads back the text that is on screen.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        if not shutil.which("chromium") and not shutil.which("google-chrome"):
+            raise unittest.SkipTest("no headless browser installed")
+        cls.browser = shutil.which("chromium") or shutil.which("google-chrome")
+        cls.tok = ByteTokenizer()
+        cls.engine = MockEngine(cls.tok, "Hello.", max_context=4096)
+        cls.svc = Service(cls.engine, cls.tok, ChatTemplate(Path(__file__).parent / "chat_template.jinja"))
+        cls.httpd = serve(cls.svc, port=0)
+        cls.base = "http://127.0.0.1:" + str(cls.httpd.server_address[1])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def dom(self, path="/"):
+        import subprocess
+        done = subprocess.run([self.browser, "--headless", "--no-sandbox", "--disable-gpu", "--lang=zh-CN",
+                               "--virtual-time-budget=12000", "--dump-dom", self.base + path],
+                              capture_output=True, text=True, timeout=120)
+        return done.stdout
+
+    def test_the_html_is_chinese(self):
+        self.assertIn('lang="zh-CN"', self.dom("/"))
+
+    def test_the_chat_page_is_chinese(self):
+        dom = self.dom("/")
+        for word in ("对话", "监控", "关于", "随便问点什么"):
+            self.assertIn(word, dom, word)
+        self.assertNotIn("代币", dom)
+        self.assertNotIn("令牌", dom)
+
+    def test_the_monitor_page_is_chinese(self):
+        dom = self.dom("/#monitor")
+        for word in ("模型状态", "上下文占用", "最近的请求", "时间", "状态", "耗时"):
+            self.assertIn(word, dom, word)
+        self.assertNotIn("mon.metric.", dom, "a card showed a raw key instead of its label")
+
+    def test_the_about_page_is_chinese(self):
+        dom = self.dom("/#about")
+        for word in ("模型与引擎", "这台电脑", "接入你的工具", "设置", "界面语言"):
+            self.assertIn(word, dom, word)
+        self.assertIn("简体中文", dom)
+
+    def test_no_raw_i18n_key_reaches_the_screen(self):
+        """A key the pack lacks shows as the key - a bug a user can see, on any of the three pages."""
+        import re
+        for path in ("/", "/#monitor", "/#about"):
+            dom = self.dom(path)
+            shown = re.findall(r">((?:mon|chat|fact|drawer|tool|mcp|cc|toast|pill|tab|img|about|cfg|code|file|chip|export|theme|app)\.[a-zA-Z.]+)<", dom)
+            self.assertEqual(shown, [], "%s showed raw keys: %s" % (path, shown[:5]))
+
+    def test_the_console_is_clean(self):
+        """An exception during start used to leave the page untranslated, silently."""
+        import subprocess
+        done = subprocess.run([self.browser, "--headless", "--no-sandbox", "--disable-gpu", "--lang=zh-CN",
+                               "--enable-logging=stderr", "--log-level=0", "--virtual-time-budget=10000",
+                               "--dump-dom", self.base + "/"],
+                              capture_output=True, text=True, timeout=120)
+        errors = [line for line in done.stderr.splitlines()
+                  if "Uncaught" in line or ("CONSOLE" in line and ("Error" in line or "Exception" in line))]
+        self.assertEqual(errors, [], "\n".join(errors[:3]))

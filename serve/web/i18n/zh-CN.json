@@ -301,5 +301,14 @@
   "chip.image": "图片",
   "chip.pasted": "粘贴的图片",
   "chip.tool": "工具",
-  "export.you": "我"
+  "export.you": "我",
+  "err.bodyTooLarge": "请求内容超过了这个服务器能接收的上限",
+  "err.promptTooLong": "提示词超过了模型的上下文长度",
+  "err.noVision": "这个模型无法识别图片",
+  "err.key": "API key 错误或缺失",
+  "err.engine": "引擎已停止；下一个请求会重新启动它",
+  "err.notFound": "未找到",
+  "err.timeout": "请求超时",
+  "err.memory": "显存或内存不足以处理这个请求",
+  "err.structured": "回答不符合要求的格式"
 }
