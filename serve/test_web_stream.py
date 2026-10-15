@@ -487,3 +487,58 @@ class RenderedPages(unittest.TestCase):
         errors = [line for line in done.stderr.splitlines()
                   if "Uncaught" in line or ("CONSOLE" in line and ("Error" in line or "Exception" in line))]
         self.assertEqual(errors, [], "\n".join(errors[:3]))
+
+class Wording(unittest.TestCase):
+    """#2686: the wording is translated, the terms are not - and the other way round: an ordinary word must not
+
+    be left in English just because it sits next to a term.  Three labels were (Seed, Temperature, Prompt).
+    """
+
+    def pack(self, name):
+        return json.loads((WEB / "i18n" / name).read_text(encoding="utf-8"))
+
+    def test_a_term_is_never_translated(self):
+        zh = self.pack("zh-CN.json")
+        joined = " ".join(v for v in zh.values() if isinstance(v, str))
+        for term in ("token", "VRAM", "PCIe", "Prefill", "Decode", "MTP", "KV cache", "Top-p", "Top-k", "seed"):
+            self.assertIn(term, joined, term)
+        for wrong in ("代币", "令牌"):
+            self.assertNotIn(wrong, joined, wrong)
+
+    def test_an_ordinary_word_is_translated(self):
+        """These are plain nouns, not terms - leaving them in English is just a missed translation."""
+        zh = self.pack("zh-CN.json")
+        en = self.pack("en.json")
+        for key, chinese in (("drawer.seed", "随机种子"), ("drawer.temp", "温度"), ("mon.th.prompt", "提示词")):
+            self.assertEqual(zh[key], chinese, key)
+            self.assertNotEqual(zh[key], en[key], key)
+
+    def test_what_the_pages_show_is_translated(self):
+        """Rendered, not just in the pack: the three labels a user actually reads."""
+        import shutil
+        if not shutil.which("chromium") and not shutil.which("google-chrome"):
+            self.skipTest("no headless browser installed")
+        browser = shutil.which("chromium") or shutil.which("google-chrome")
+        tok = ByteTokenizer()
+        svc = Service(MockEngine(tok, "Hello.", max_context=4096), tok,
+                      ChatTemplate(Path(__file__).parent / "chat_template.jinja"))
+        httpd = serve(svc, port=0)
+        try:
+            import subprocess
+            base = "http://127.0.0.1:" + str(httpd.server_address[1])
+            env = dict(__import__("os").environ, LANG="zh_CN.UTF-8")
+            def dom(path):
+                return subprocess.run([browser, "--headless", "--no-sandbox", "--disable-gpu",
+                                       "--user-data-dir=/tmp/crW" + path.replace("/", "_"), "--lang=zh-CN",
+                                       "--virtual-time-budget=12000", "--dump-dom", base + path],
+                                      capture_output=True, text=True, timeout=120, env=env).stdout
+            chat, monitor = dom("/"), dom("/#monitor")
+            self.assertIn("随机种子", chat)
+            self.assertIn("温度", chat)
+            self.assertIn("提示词", monitor)
+            # and the terms survived the trip
+            self.assertNotIn("代币", chat + monitor)
+            self.assertIn("Top-p", chat)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
