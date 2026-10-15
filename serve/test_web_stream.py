@@ -227,11 +227,25 @@ class LanguagePacks(unittest.TestCase):
             self.assertTrue(l["name"], l)
 
     def test_the_pages_are_utf8_and_ask_not_to_be_machine_translated(self):
-        """#2687: the page brings its own translation now, so the browser must not re-translate it."""
+        """#2687: the pages bring their own translation now, so the browser must not re-translate them."""
         for page in ("index.html", "monitor.html"):
             text = (WEB / page).read_text(encoding="utf-8")
             self.assertIn('charset="utf-8"', text, page)
             self.assertIn('translate="no"', text, page)
+
+    def test_the_api_monitor_page_is_translated_too(self):
+        """#2686: /api-monitor is a page of its own; translate="no" is only fair if it is actually translated."""
+        html = (WEB / "monitor.html").read_text(encoding="utf-8")
+        js = (WEB / "monitor.js").read_text(encoding="utf-8")
+        self.assertGreaterEqual(html.count("data-i18n"), 40, "the API monitor's markup carries almost no keys")
+        self.assertIn("data-i18n", html)
+        self.assertIn('t("apimon.', js)
+        keys = set(re.findall(r'data-i18n(?:-aria|-title|-placeholder)?="([^"]+)"', html))
+        keys |= set(re.findall(r'\bt\("([a-z]+\.[a-zA-Z]+)"', js))
+        for name in ("en.json", "zh-CN.json"):
+            pack = json.loads((WEB / "i18n" / name).read_text(encoding="utf-8"))
+            missing = sorted(k for k in keys if k not in pack)
+            self.assertEqual(missing, [], f"{name} is missing {missing[:8]}")
 
     def test_every_key_the_page_uses_exists(self):
         """A key the pack lacks would show as the raw key on screen."""
