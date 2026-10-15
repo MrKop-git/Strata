@@ -73,6 +73,11 @@ async function showDetail() {
 async function refresh() {
   try {
     const [status, history] = await Promise.all([api("/v1/status"), api("/api/requests")]);
+    return await apply(status, history);
+  } catch (error) { notice(error.message); text("updated", "Disconnected · retrying"); $("load").disabled = $("unload").disabled = true; }
+}
+async function apply(status, history) {
+  try {
     state = status; records = history.requests;
     status.loaded = history.loaded; status.auto_load = history.auto_load;
     if (selected && !records.some(r => r.id === selected)) {
@@ -107,5 +112,32 @@ $("theme").onclick = () => { const theme = document.documentElement.dataset.them
 $("search").oninput = list; $("filter").onchange = list;
 document.querySelectorAll("[data-pane]").forEach(button => { button.onclick = () => { pane = button.dataset.pane; document.querySelectorAll("[data-pane]").forEach(b => b.setAttribute("aria-selected", String(b === button))); content(); }; });
 $("copy").onclick = async () => { try { await navigator.clipboard.writeText($("content").textContent); text("copy", "Copied"); setTimeout(() => text("copy", "Copy"), 1500); } catch (_) { notice("Clipboard unavailable; select the text to copy it."); } };
-async function poll() { await refresh(); setTimeout(poll, 2000); }
-poll();
+// #2687: one long-lived GET /api/requests/stream instead of asking every 2 s.  A page that rewrote its own text
+// twice a second fought Chrome's page translation (the UI flipped back to English); the server now sends an
+// event only when what this page draws from changed, and nothing while nothing does.  A build without the route
+// (an older server) never delivers an event, so the page keeps asking every 2 s - what it did before.
+let stream = null, streamGot = false, pollTimer = null;
+function openStream() {
+  if (stream || pollTimer) return;
+  let es;
+  try { es = new EventSource("/api/requests/stream"); } catch (error) { startPolling(); return; }
+  stream = es;
+  es.addEventListener("requests", event => {
+    streamGot = true;
+    try { apply(JSON.parse(event.data).status, {requests: JSON.parse(event.data).requests || [], loaded: state?.loaded, auto_load: state?.auto_load}); } catch (error) {}
+  });
+  es.onerror = () => {
+    if (!streamGot && es.readyState === EventSource.CLOSED) { stream = null; startPolling(); return; }
+    notice("Disconnected · retrying");
+  };
+}
+function startPolling() {
+  if (pollTimer) return;
+  if (stream) { stream.close(); stream = null; }
+  const tick = async () => {
+    await refresh();
+    if (pollTimer) pollTimer = setTimeout(tick, 2000);
+  };
+  pollTimer = setTimeout(tick, 0);
+}
+openStream();
