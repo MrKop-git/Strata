@@ -5224,17 +5224,6 @@ def make_handler(svc: Service):
                              asked or "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta")
             self.send_header("Access-Control-Max-Age", "600")
 
-        def _metrics_fingerprint(self, m):
-            """#2687: the part of a /metrics payload the Monitor draws from, so a stream writes an event only when
-            that changed.  The hardware sampler runs once a second (serve/telemetry.py); a page that asked for a
-            slower tick gets nothing until its own next tick."""
-            live = m.get("live") or {}
-            return json.dumps([live.get("state"), live.get("queued"), live.get("phase"), live.get("prompt_read"),
-                               live.get("generated"), live.get("tok_s"), live.get("parallel"), live.get("running"),
-                               (m.get("requests") or [{}])[0].get("id"), m.get("requests_kept"),
-                               m.get("conversation_cache"), m.get("totals"), m.get("hardware"),
-                               m.get("hardware_static"), m.get("engine")], sort_keys=True, default=str)
-
         def _metrics_stream(self, every_s, all_requests):
             """GET /metrics/stream: one long-lived response the server writes a `metrics` event to (#2687), instead
             of the web app asking for /metrics once a second.  A polling page rewrote its own text every second, which
@@ -5246,15 +5235,15 @@ def make_handler(svc: Service):
                 svc.metrics_streams.append(stop)
             try:
                 self._sse()
-                last = None
                 while not stop.is_set():
+                    # The Monitor is a live dashboard: the hardware sampler runs once a second, so there is always
+                    # something to send.  The point of the stream is one connection that keeps being written to, not
+                    # fewer updates - an idle Monitor must still scroll.  (The jitter was never the updates: see
+                    # serve/web/app.js, which writes a node only when its text really changed.)
                     payload = svc.metrics(all_requests=all_requests)
-                    fingerprint = self._metrics_fingerprint(payload)
-                    if fingerprint != last:                      # unchanged: no event, no write
-                        last = fingerprint
-                        self.wfile.write(b"event: metrics\ndata: " +
-                                         json.dumps(payload, ensure_ascii=False).encode() + b"\n\n")
-                        self.wfile.flush()
+                    self.wfile.write(b"event: metrics\ndata: " +
+                                     json.dumps(payload, ensure_ascii=False).encode() + b"\n\n")
+                    self.wfile.flush()
                     if stop.wait(every_s):
                         break
                     if self._client_gone():
@@ -5276,15 +5265,11 @@ def make_handler(svc: Service):
                 svc.metrics_streams.append(stop)
             try:
                 self._sse()
-                last = None
                 while not stop.is_set():
                     payload = {"status": svc.v1_status(), "requests": svc.request_records() or []}
-                    fingerprint = json.dumps(payload, sort_keys=True, default=str)
-                    if fingerprint != last:
-                        last = fingerprint
-                        self.wfile.write(b"event: requests\ndata: " +
-                                         json.dumps(payload, ensure_ascii=False).encode() + b"\n\n")
-                        self.wfile.flush()
+                    self.wfile.write(b"event: requests\ndata: " +
+                                     json.dumps(payload, ensure_ascii=False).encode() + b"\n\n")
+                    self.wfile.flush()
                     if stop.wait(1.0):
                         break
                     if self._client_gone():

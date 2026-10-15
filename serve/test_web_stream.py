@@ -54,8 +54,8 @@ class Stream(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_first_event_arrives_without_asking_again(self):
-        """The point of the change: one GET, and the payload comes on its own - no request per second."""
+    def test_events_keep_coming_on_one_connection(self):
+        """The Monitor is a live dashboard: one GET, then events on their own - no request per second."""
         conn, r = self.open_stream()
         try:
             self.assertEqual(r.readline().strip(), b"event: metrics")
@@ -64,6 +64,28 @@ class Stream(unittest.TestCase):
                 self.assertIn(key, data)
         finally:
             conn.close()
+
+    def test_a_live_monitor_keeps_getting_events(self):
+        """#2687: the stream must not throttle.  An idle Monitor still scrolls (the hardware sampler runs every
+        second), so more events have to arrive on the one connection without the page asking again."""
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        try:
+            sock.sendall(b"GET /metrics/stream HTTP/1.0\r\nAccept: text/event-stream\r\n\r\n")
+            reader = sock.makefile("rb")
+            while reader.readline().strip():                  # the headers, up to the blank line
+                pass
+            seen = 0
+            deadline = time.time() + 8                        # the sampler's own tick is one second
+            while time.time() < deadline and seen < 3:
+                line = reader.readline()
+                if not line:
+                    break
+                if line.strip() == b"event: metrics":
+                    reader.readline()                        # the data line
+                    seen += 1
+            self.assertGreaterEqual(seen, 3, "the stream throttled: a live Monitor stopped getting events")
+        finally:
+            sock.close()
 
     def test_stream_ends_when_the_client_hangs_up(self):
         """A closed tab must not leave a thread waiting on a tick: the next tick notices the socket is gone."""
@@ -321,3 +343,52 @@ class Translation(unittest.TestCase):
     def test_the_pack_logic_in_javascript(self):
         out = self.run_js(self.harness())
         self.assertIn("RESULT: ALL OK", out, out)
+
+class NoRewrite(unittest.TestCase):
+    """#2687: the flicker's cause.  Chrome translates a word, and a script that wrote the English back every second
+
+    flipped the page to English until Chrome translated again.  The fix is not fewer updates (a live Monitor must
+    still scroll) - it is never writing a node whose text did not change.  Run in node with the DOM stubbed.
+    """
+
+    def run_js(self, script):
+        import subprocess
+        import tempfile
+        try:
+            subprocess.run(["node", "--version"], capture_output=True, check=True)
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("node is not installed")
+        with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False, encoding="utf-8") as f:
+            f.write(script)
+            path = f.name
+        try:
+            done = subprocess.run(["node", path], capture_output=True, text=True, timeout=60)
+        finally:
+            Path(path).unlink(missing_ok=True)
+        self.assertEqual(done.returncode, 0, done.stderr[:500])
+        return done.stdout
+
+    def the_helpers(self):
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        start = js.index("// ------------------------------------------------------------------ writing text (#2687)")
+        end = js.index("// ------------------------------------------------------------------ toasts")
+        return js[start:end]
+
+    def test_a_node_is_not_rewritten_when_its_text_did_not_change(self):
+        script = "\n".join([
+            'let writes = 0;',
+            'const node = { get textContent() { return this._t; }, set textContent(v) { writes++; this._t = v; }, dataset: {} };',
+            'const other = { get innerHTML() { return this._h; }, set innerHTML(v) { writes++; this._h = v; }, dataset: {} };',
+            self.the_helpers(),
+            'setText(node, "42.1"); setText(node, "42.1"); setText(node, "42.1");',
+            'if (writes !== 1) { console.log("FAIL setText wrote " + writes + " times for the same value"); process.exit(1); }',
+            'setText(node, "43.0");',
+            'if (writes !== 2) { console.log("FAIL setText did not write a changed value"); process.exit(1); }',
+            'const before = writes;',
+            'setWords(node, "Decode now"); setWords(node, "Decode now");',
+            'if (writes !== before + 1) { console.log("FAIL setWords rewrote an unchanged label"); process.exit(1); }',
+            '// a number changes, a word does not: the Monitor may update values every tick but must not',
+            '// touch the words it showed, or a translated page flickers back to English',
+            'console.log("RESULT: ALL OK");',
+        ])
+        self.assertIn("RESULT: ALL OK", self.run_js(script))

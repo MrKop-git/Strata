@@ -98,6 +98,7 @@ function fillLangs() {
     const l = LANGS.find((x) => x.code === c);
     return '<option value="' + esc(c) + '"' + (c === lang ? " selected" : "") + ">" + esc(l ? l.name : c) + "</option>";
   }).join("");
+  setHtml($("mcp-list"), mcpHtml);
 }
 async function loadLangs() {
   try {
@@ -109,6 +110,28 @@ async function loadLangs() {
 }
 const langSel = $("lang-select");                 // absent on an older page: nothing to switch
 if (langSel) langSel.onchange = () => setLang(langSel.value, true);
+// ------------------------------------------------------------------ writing text (#2687)
+// A node is written only when its text really changed.  This is what stops the flicker: Chrome's page translation
+// rewrites the words it translated, and a script that wrote "Decode now" again every second put the English back,
+// so the two fought over the same node - one flip per second.  Numbers still update every tick (a number needs no
+// translating); a label is written once and then left alone.
+function setText(el, value) {
+  if (el && el.textContent !== String(value)) el.textContent = value;
+}
+function setHtml(el, value) {
+  if (el && el.innerHTML !== String(value)) el.innerHTML = value;
+}
+// the words a node shows, kept beside it: set once, then never touched again while the language is the same
+function setWords(el, value) {
+  if (!el) return;
+  if (el.dataset.words === String(value) && el.textContent === String(value)) return;
+  el.textContent = value;
+  el.dataset.words = value;
+}
+function setAttr(el, name, value) {
+  if (el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+}
+
 // ------------------------------------------------------------------ toasts
 function toast(kind, title, text = "", ms = 3500, action = null) {
   const names = {info: "info", success: "check", warn: "warning", error: "error"};
@@ -195,7 +218,7 @@ async function loadHealth() {
     health = await (await fetch("health")).json();
     $("attach-btn").title = health.images ? t("chat.attachImages")
                                           : t("chat.attach");
-    $("chat-empty-sub").textContent = t("chat.emptySub", {model: health.model});
+    setText($("chat-empty-sub"), t("chat.emptySub", {model: health.model}));
     $("tab-btn-images").hidden = !health.image_generation;
     if (location.hash === "#images" && health.image_generation) showTab("images");
   } catch (e) {
@@ -241,8 +264,8 @@ function spark(id, values, max) {
   svg.querySelector(".area").setAttribute("d", `${line}L100,32L0,32Z`);
 }
 function setMetric(key, value, unit, sub) {
-  $(`mv-${key}`).innerHTML = value == null ? "–" : `${esc(value)}${unit ? `<small>${esc(unit)}</small>` : ""}`;
-  $(`ms-${key}`).textContent = sub || "";
+  setHtml($(`mv-${key}`), value == null ? "–" : `${esc(value)}${unit ? `<small>${esc(unit)}</small>` : ""}`);
+  setWords($(`ms-${key}`), sub || "");
 }
 
 let lastMetrics = null, metricsFailures = 0, keyWarned = false, mcpTick = 0;
@@ -269,7 +292,7 @@ async function poll() {
 
 function setPill(state, text) {
   $("pill").dataset.state = state === "error" ? "queued" : state;
-  $("pill-text").textContent = text;
+  setWords($("pill-text"), text);
 }
 
 function render(m) {
@@ -303,13 +326,13 @@ function renderConvCache(c) {
   const pct = (a, b) => (b ? `${Math.min(100, (100 * a) / b)}%` : "0%");
   $("cc-bars").hidden = !c.enabled;
   if (c.enabled) {
-    $("cc-slots-text").textContent = `${fmt(c.parked)} / ${fmt(c.slots)}`;
+    setText($("cc-slots-text"), `${fmt(c.parked)} / ${fmt(c.slots)}`);
     $("cc-slots-bar").style.width = pct(c.parked, c.slots);
     const budget = c.budget_mib * 1048576;
-    $("cc-mem-text").textContent = `${gb(c.bytes)} / ${gb(budget)} GB`;
+    setText($("cc-mem-text"), `${gb(c.bytes)} / ${gb(budget)} GB`);
     $("cc-mem-bar").style.width = pct(c.bytes, budget);
   }
-  $("cc-sum").textContent = c.requests ? t("cc.summary", {reused: fmt(c.requests_reused), n: fmt(c.requests)}) : "";
+  setText($("cc-sum"), c.requests ? t("cc.summary", {reused: fmt(c.requests_reused), n: fmt(c.requests)}) : "");
   const share = c.prompt_tokens ? t("cc.share", {pct: fmt((100 * c.reused_tokens) / c.prompt_tokens)}) : "";
   const event = c.last_event ? t("cc.event", {what: c.last_event === "parked" ? t("cc.eventParked") : t("cc.eventRestored"), n: fmt(c.last_tokens), when: since(c.last_at)}) : null;
   facts($("cc-facts"), [
@@ -318,9 +341,7 @@ function renderConvCache(c) {
     [t("cc.parkedRestored"), c.enabled ? t("cc.parkedRestoredValue", {parks: fmt(c.parks), restores: fmt(c.restores), evicted: c.evictions ? t("cc.evicted", {n: fmt(c.evictions)}) : ""}) : null],
     [t("cc.lastSwitch"), c.enabled ? event : null],
   ]);
-  $("cc-note").textContent = c.enabled
-    ? t("cc.noteOn")
-    : t("cc.noteOff");
+  setWords($("cc-note"), c.enabled ? t("cc.noteOn") : t("cc.noteOff"));
 }
 
 function renderTotals(t) {
@@ -356,8 +377,8 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
     delete prog.dataset.tone;
     detail = t("mon.lastRequest", {n: fmt(last.output_tokens), rate: last.decode_tok_s ? t("mon.atRate", {rate: fmt(last.decode_tok_s, 1)}) : ""});
   }
-  $("state-label").textContent = label;
-  $("state-detail").textContent = detail;
+  setWords($("state-label"), label);
+  setText($("state-detail"), detail);
   $("state-bar").style.width = `${pct}%`;
 
   // the eight cards
@@ -409,29 +430,31 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
   const frac = ctx ? Math.min(1, used / ctx) : 0;
   $("ctx-fill").setAttribute("stroke-dasharray", `${(235.6 * frac).toFixed(1)} 314.2`);
   $("ctx-fill").style.opacity = 235.6 * frac >= 3 ? "1" : "0";         // a near-zero arc would draw just its round cap
-  $("ctx-pct").textContent = `${Math.round(frac * 100)}%`;
-  $("ctx-sub").textContent = ctx ? `${kfmt(used)} / ${ctxfmt(ctx)}` : "–";
+  setText($("ctx-pct"), `${Math.round(frac * 100)}%`);
+  setText($("ctx-sub"), ctx ? `${kfmt(used)} / ${ctxfmt(ctx)}` : "–");
   const cacheBytes = (eng.expert_cache_mib || 0) * 1048576;
-  $("slots-text").textContent = eng.expert_slots ? `${fmt(eng.expert_slots)} · ${gb(cacheBytes)} GB` : "–";
+  setText($("slots-text"), eng.expert_slots ? `${fmt(eng.expert_slots)} · ${gb(cacheBytes)} GB` : "–");
   $("slots-bar").style.width = hw.gpu_mem_total ? `${Math.min(100, (100 * cacheBytes) / hw.gpu_mem_total)}%` : "0%";
-  $("ram-text").textContent = hw.ram_total ? `${gb(hw.ram_used)} / ${gb(hw.ram_total, 0)} GB` : "–";
+  setText($("ram-text"), hw.ram_total ? `${gb(hw.ram_used)} / ${gb(hw.ram_total, 0)} GB` : "–");
   const ramPct = hw.ram_total ? (100 * hw.ram_used) / hw.ram_total : 0;
   $("ram-bar").style.width = `${ramPct}%`;
   if (ramPct > 92) $("ram-progress").dataset.tone = "danger"; else delete $("ram-progress").dataset.tone;
-  $("temp-text").textContent = hw.gpu_temp == null ? "–" : `${fmt(hw.gpu_temp)} °C`;
+  setText($("temp-text"), hw.gpu_temp == null ? "–" : `${fmt(hw.gpu_temp)} °C`);
   $("temp-bar").style.width = hw.gpu_temp == null ? "0%" : `${Math.min(100, hw.gpu_temp)}%`;
 
   // recent requests
   const body = $("req-body");
-  if (!requests.length) {
-    body.innerHTML = `<tr><td colspan="9" class="muted">${esc(t("mon.noRequests"))}</td></tr>`;
-  } else {
+  // The rows are rebuilt only when they really changed.  Rebuilding them every second replaced every word in the
+  // table, which is what made a translated table flicker back to English (#2687); when nothing changed, not one
+  // node in here is touched.
+  const rowsHtml = (list) => {
+    if (!list.length) return `<tr><td colspan="9" class="muted">${esc(t("mon.noRequests"))}</td></tr>`;
     const badge = {stop: ["", t("mon.finish.done")], length: ["", t("mon.finish.maxTokens")], cancel: ["st-badge--queued", t("mon.finish.stopped")],
                    disconnect: ["st-badge--queued", t("mon.finish.closed")], error: ["st-badge--error", t("mon.finish.error")]};
-    body.innerHTML = requests.slice(0, reqShowAll ? requests.length : 12).map((r) => {
+    return list.map((r) => {
       const [cls, raw] = badge[r.finish] || ["", r.finish || "–"];
       const text = t(raw);
-      const t = new Date(r.time * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+      const time = new Date(r.time * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
       const proj = r.projection == null ? "" : ` <span class="st-badge${r.projection ? " st-badge--reading" : ""}" title="${esc(t("mon.esp", {state: r.projection ? t("mon.esp.on") : t("mon.esp.off")}))}">${esc(r.projection ? t("mon.espBadge") : t("mon.espStock"))}</span>`;
       // #588: the VRAM share; the PCIe share (--pcie-frac) beside it when there is one
       const hit = r.hit_rate == null ? "–" : `${(r.hit_rate * 100).toFixed(1)}%` +
@@ -439,22 +462,23 @@ function renderMonitor(live, hw, st, eng, h, last, requests, totals, kept) {
       // Reused tokens are not prefetched again. Match the Monitor's existing Prefill metric.
       const fresh = r.prompt_tokens == null ? null : Math.max(0, r.prompt_tokens - (r.reused || 0));
       const prefillRate = fresh > 0 && r.prompt_ms > 0 ? fresh / (r.prompt_ms / 1000) : null;
-      return `<tr><td>${esc(t)}</td><td><span class="st-badge ${cls}">${esc(text)}</span>${proj}</td><td class="num">${fmt(r.prompt_tokens)}</td>
+      return `<tr><td>${esc(time)}</td><td><span class="st-badge ${cls}">${esc(text)}</span>${proj}</td><td class="num">${fmt(r.prompt_tokens)}</td>
         <td class="num">${fmt(r.reused)}</td><td class="num">${fmt(r.output_tokens)}</td><td class="num">${fmt(prefillRate)}</td><td class="num">${fmt(r.decode_tok_s, 1)}</td>
         <td class="num">${hit}</td><td class="num">${fmt(r.duration_s, 1)} s</td></tr>`;
     }).join("");
-  }
+  };
+  setHtml(body, rowsHtml(requests.slice(0, reqShowAll ? requests.length : 12)));
   const all = $("req-all");
   kept = kept == null ? requests.length : kept;
   all.hidden = kept <= 12;
-  all.textContent = reqShowAll ? t("mon.showFewer") : t("mon.showAllN", {n: kept});
+  setWords(all, reqShowAll ? t("mon.showFewer") : t("mon.showAllN", {n: kept}));
   $("req-wrap").classList.toggle("all", reqShowAll);
-  $("req-totals").textContent = renderTotals(totals);
+  setText($("req-totals"), renderTotals(totals));
 }
 
 function facts(el, rows) {
-  el.innerHTML = rows.filter((r) => r[1] != null && r[1] !== "").map(([k, v, copy]) =>
-    `<dt>${esc(k)}</dt><dd>${copy ? `<code>${esc(v)}</code><button class="st-btn st-btn--icon" data-copy="${esc(v)}" aria-label="${esc(t("chat.copy"))}">${icon("copy")}</button>` : esc(v)}</dd>`).join("");
+  setHtml(el, rows.filter((r) => r[1] != null && r[1] !== "").map(([k, v, copy]) =>
+    `<dt>${esc(k)}</dt><dd>${copy ? `<code>${esc(v)}</code><button class="st-btn st-btn--icon" data-copy="${esc(v)}" aria-label="${esc(t("chat.copy"))}">${icon("copy")}</button>` : esc(v)}</dd>`).join(""));
 }
 // INFO cvec=project:4-44[:singleL] | add:A-B | 0
 function projectionText(c) {
@@ -515,10 +539,10 @@ function renderMcp() {
   $("mcp-card").hidden = !servers.length;
   $("mcp-row").hidden = !servers.length;
   const ready = servers.filter((s) => s.status === "ready" || s.status === "stopped");
-  $("mcp-sum").textContent = servers.length ? t("mcp.summary", {tools: fmt(mcpInfo.tools), ready: ready.length, n: servers.length}) : "";
+  setText($("mcp-sum"), servers.length ? t("mcp.summary", {tools: fmt(mcpInfo.tools), ready: ready.length, n: servers.length}) : "");
   $("mcp-row-sub").textContent = mcpInfo.tools ? t("mcp.toolsFrom", {n: fmt(mcpInfo.tools), names: ready.map((s) => s.name).join(", ")})
                                                : t("mcp.noneYet");
-  $("mcp-list").innerHTML = servers.map((s) => {
+  const mcpHtml = servers.map((s) => {
     const [cls, rawState] = MCP_STATE[s.status] || ["", s.status];
     const text = t(rawState);
     const info = s.info && s.info.name ? ` · ${s.info.name}${s.info.version ? ` ${s.info.version}` : ""}` : "";
@@ -572,13 +596,13 @@ $("cfg-save").addEventListener("click", async () => {
     const old = Array.isArray(k.value) ? k.value.join(", ") : k.value;
     if (JSON.stringify(v) !== JSON.stringify(old ?? null)) set[k.key] = v;
   });
-  if (!Object.keys(set).length) { $("cfg-msg").textContent = t("cfg.nothingChanged"); return; }
+  if (!Object.keys(set).length) { setWords($("cfg-msg"), t("cfg.nothingChanged")); return; }
   try {
     const r = await fetch("config", {method: "POST", headers: headers(true), body: JSON.stringify({set})});
     const b = await r.json();
     if (!r.ok) throw new Error((b.error || {}).message || `HTTP ${r.status}`);
-    $("cfg-msg").textContent = b.changed.length
-      ? t("cfg.saved", {keys: b.changed.join(", "), file: b.file}) : t("cfg.nothingChanged");
+    setWords($("cfg-msg"), b.changed.length
+      ? t("cfg.saved", {keys: b.changed.join(", "), file: b.file}) : t("cfg.nothingChanged"));
     loadConfig();
   } catch (e) {
     $("cfg-msg").textContent = "";
@@ -781,7 +805,7 @@ function updateAssistant(el, m, streaming) {
     bubble.innerHTML = answerHtml(m);
     if (streaming) bubble.classList.add("cursor"); else bubble.classList.remove("cursor");
   }
-  el.querySelector(".meta-text").textContent = m.meta || (streaming ? "" : m.stopped ? t("chat.stopped") : "");
+  setText(el.querySelector(".meta-text"), m.meta || (streaming ? "" : m.stopped ? t("chat.stopped") : ""));
   el.querySelector("[data-msg-copy]").hidden = streaming || !m.text;
 }
 function renderChat() {
@@ -862,7 +886,7 @@ function assistantMessages(m) {
 function setBusy(on) {
   $("stop-btn").hidden = !on;
   $("send-btn").disabled = on;
-  $("composer-hint").textContent = on ? "" : t("chat.hint");
+  setWords($("composer-hint"), on ? "" : t("chat.hint"));
 }
 
 async function send() {
@@ -1192,7 +1216,7 @@ $("img-form").onsubmit = async (ev) => {
   if ($("img-seed").value !== "") body.seed = Number($("img-seed").value);
   $("img-go").disabled = true;
   const t0 = performance.now();
-  $("img-hint").textContent = t("img.generating");
+  setWords($("img-hint"), t("img.generating"));
   try {
     const r = await fetch("v1/images/generations", {method: "POST", headers: headers(true), body: JSON.stringify(body)});
     const j = await r.json();
@@ -1207,9 +1231,9 @@ $("img-form").onsubmit = async (ev) => {
       fig.append(img, cap);
       $("img-results").prepend(fig);
     }
-    $("img-hint").textContent = t("img.done");
+    setWords($("img-hint"), t("img.done"));
   } catch (e) {
-    $("img-hint").textContent = "";
+    setWords($("img-hint"), "");
     toast("error", t("toast.noImage"), String(e.message || e), 8000);
   } finally {
     $("img-go").disabled = false;

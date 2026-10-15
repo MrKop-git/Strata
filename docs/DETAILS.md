@@ -2029,12 +2029,20 @@ translation (Chrome's "translate this page") was also rewriting, so the UI flipp
 one flip per second on the Monitor.
 
 Both now open one response and keep it: `GET /metrics/stream` and `GET /api/requests/stream`, each a
-`text/event-stream` the server writes an event to. It writes **only when what the page draws from changed** and
-nothing at all while nothing does, so an idle Monitor now costs no traffic and rewrites no text. `?every=N` sets the
-server's own tick in seconds (1..60, default 1); `?requests=all` sends every request kept, as `GET /metrics?requests=all`
-did. Both end when the tab closes (the next tick notices the socket) or when the server stops, and both use the
-existing API-key check. A build without the routes - an older server - never delivers an event, and the page then
-keeps asking on its old timer: the English page on an older server behaves exactly as it did before.
+`text/event-stream` the server keeps writing to on its own tick (one second), instead of the page opening a new
+request each time. **This is one connection, not fewer updates** - the Monitor is a live dashboard and keeps
+scrolling exactly as before. `?every=N` sets the server's tick in seconds (1..60, default 1); `?requests=all` sends
+every request kept, as `GET /metrics?requests=all` did. Both end when the tab closes (the next tick notices the
+socket) or when the server stops, and both use the existing API-key check. A build without the routes - an older
+server - never delivers an event, and the page then keeps asking on its old timer: the page on an older server
+behaves exactly as it did before.
+
+**The flicker was not the rate of the updates, it was the rewriting.** Chrome translates a word by replacing it in
+the page, and a script that wrote the English back a second later put the original text in its place - so the two
+fought over the same node, one flip per second. The fix is on the page: a node is written **only when its text
+really changed** (`setText`, `setWords`, `setHtml` in `serve/web/app.js`). A number still updates every tick, and a
+number needs no translating; a word is written once and then left alone, so nothing competes with the translation.
+`translate="no"` tells the browser the page translates itself.
 
 The web app is translatable: `serve/web/i18n/<lang>.json`, one UTF-8 pack per language (`en.json`, `zh-CN.json`),
 read by the page itself over the same origin. **UTF-8 everywhere, never GBK/cp936** - the packs and every other web
