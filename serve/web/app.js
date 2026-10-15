@@ -94,15 +94,20 @@ function browserLang() {
   return "en";
 }
 function fillLangs() {
-  const sel = $("lang-select");
-  if (!sel) return;
+  const seg = $("lang-seg");
+  if (!seg) return;                                  // an older page has no switch
   const known = LANGS.map((l) => l.code);
   const saved = store.get("lang", null);
   const wanted = [...known, saved, lang].filter((c, i, a) => c && a.indexOf(c) === i);
-  sel.innerHTML = wanted.map((c) => {
+  // one button per language, in the drawer's own segmented control (role=radio, as "Thinking" does it)
+  seg.innerHTML = wanted.map((c) => {
     const l = LANGS.find((x) => x.code === c);
-    return '<option value="' + esc(c) + '"' + (c === lang ? " selected" : "") + ">" + esc(l ? l.name : c) + "</option>";
+    return '<button type="button" role="radio" data-lang="' + esc(c) + '" aria-checked="' +
+           (c === lang ? "true" : "false") + '">' + esc(l ? l.name : c) + "</button>";
   }).join("");
+  for (const b of seg.children) {
+    b.onclick = () => setLang(b.dataset.lang, true);
+  }
 }
 async function loadLangs() {
   try {
@@ -112,8 +117,7 @@ async function loadLangs() {
     if (list.length) { LANGS.length = 0; LANGS.push(...list); }
   } catch (e) { /* an older server: English only */ }
 }
-const langSel = $("lang-select");                 // absent on an older page: nothing to switch
-if (langSel) langSel.onchange = () => setLang(langSel.value, true);
+
 // ------------------------------------------------------------------ writing text (#2687)
 // A node is written only when its text really changed.  This is what stops the flicker: Chrome's page translation
 // rewrites the words it translated, and a script that wrote "Decode now" again every second put the English back,

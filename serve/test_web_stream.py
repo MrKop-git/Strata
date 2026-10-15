@@ -314,7 +314,8 @@ class Translation(unittest.TestCase):
             'function render(m) {}', 'function renderMcp() {}', 'function renderChat() {}',
             'function setBusy() {}', 'function outputs() {}', 'function loadConfig() {}',
             'function headers() { return {}; }',
-            'const $ = () => null;',
+            'let segEl = null;',
+            'const $ = (id) => (id === "lang-seg" && segEl ? segEl : null);',
             'const METRICS = [{key: "speed", label: "Speed"}, {key: "vram", label: "VRAM"}];',
             'const FALLBACK = new Map();',
             'for (const m of METRICS) FALLBACK.set("mon.metric." + m.key, m.label);',
@@ -339,6 +340,13 @@ class Translation(unittest.TestCase):
             'check("an English browser gets English", browserLang(), "en");',
             'navigator.languages = ["de-DE"];',
             'check("a language with no pack falls back to English", browserLang(), "en");',
+            '// the switch is the drawer\'s own .seg control, one radio button per language, wired to setLang',
+            'segEl = { children: [], set innerHTML(h) { this._h = h; this.children = [...h.matchAll(/data-lang="([^"]*)" aria-checked="([^"]*)"/g)].map(m => ({dataset: {lang: m[1]}, checked: m[2], onclick: null})); }, get innerHTML() { return this._h; } };',
+            'segEl = { children: [], set innerHTML(h) { this._h = h; this.children = [...h.matchAll(/data-lang="([^"]*)" aria-checked="([^"]*)"/g)].map(m => ({dataset: {lang: m[1]}, checked: m[2], onclick: null})); }, get innerHTML() { return this._h; } };',
+            'fillLangs();',
+            'check("seg has a button per language", segEl.children.length, 2);',
+            'check("the current language is the checked radio", segEl.children.map(b => b.checked).join(","), "true,false");',
+            'check("every button is wired", segEl.children.every(b => typeof b.onclick === "function"), true);',
             'console.log(out.join("\\n"));',
             'console.log(out.some(l => l.startsWith("FAIL")) ? "RESULT: FAIL" : "RESULT: ALL OK");',
         ])
@@ -448,6 +456,18 @@ class RenderedPages(unittest.TestCase):
         for word in ("模型与引擎", "这台电脑", "接入你的工具", "设置", "界面语言"):
             self.assertIn(word, dom, word)
         self.assertIn("简体中文", dom)
+
+    def test_the_language_switch_is_the_drawer_is_segmented_control(self):
+        """#2686: the language switch uses the same .seg component as the drawer's "Thinking", as radio buttons."""
+        import re
+        dom = self.dom("/#about")
+        self.assertIn('class="seg seg--fit"', dom)
+        seg = re.search(r'<div class="seg seg--fit" id="lang-seg"[^>]*>(.*?)</div>', dom, re.S)
+        self.assertIsNotNone(seg, "the language switch is not there")
+        buttons = re.findall(r'<button type="button" role="radio" data-lang="([^"]+)" aria-checked="([^"]+)">([^<]+)</button>', seg.group(1))
+        self.assertEqual([b[0] for b in buttons], ["en", "zh-CN"])
+        self.assertEqual([b[1] for b in buttons], ["false", "true"], "a Chinese browser must show 简体中文 as chosen")
+        self.assertEqual(buttons[1][2], "简体中文")
 
     def test_no_raw_i18n_key_reaches_the_screen(self):
         """A key the pack lacks shows as the key - a bug a user can see, on any of the three pages."""

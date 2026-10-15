@@ -195,8 +195,9 @@
         <div class="toggle-row"><span data-i18n="about.dark">Dark theme</span>
           <button class="st-toggle" id="dark-toggle" role="switch" aria-checked="false" data-i18n-aria="about.dark" aria-label="Dark theme"></button></div>
         <div class="st-field">
-          <label class="st-label" for="lang-select"><span data-i18n="about.lang">Language</span></label>
-          <select class="st-input" id="lang-select"></select>
+          <span class="st-label"><span data-i18n="about.lang">Language</span></span>
+          <!-- the same segmented control the drawer uses ("Thinking"): one button per language, built by app.js -->
+          <div class="seg seg--fit" id="lang-seg" role="radiogroup" data-i18n-aria="about.lang" aria-label="Language"></div>
         </div>
         <p class="muted small" data-i18n="about.privacy">Chats, settings and the key are kept in this browser only.
           <a href="https://github.com/Niko1221/Strata" target="_blank" rel="noopener noreferrer" data-i18n="about.github">Strata on GitHub</a></p>
